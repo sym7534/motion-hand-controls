@@ -35,8 +35,10 @@ class FingerState:
     """
     Represents the state of all five fingers.
 
-    Each finger can be independently open (True) or closed (False).
-    Provides methods to map finger states to hardware channels and PWM pulse values.
+    Each finger has a continuous curl amount (0.0-1.0) where:
+    - 0.0 = fully extended/open
+    - 1.0 = fully curled/closed
+    Provides methods to map finger curl to hardware channels and PWM pulse values.
     """
 
     # Finger indices
@@ -49,27 +51,46 @@ class FingerState:
     # Finger names for display
     FINGER_NAMES = ["Thumb", "Index", "Middle", "Ring", "Pinky"]
 
-    def __init__(self):
-        """Initialize with all fingers open."""
-        # Binary state for each finger (True=open, False=closed)
-        self.fingers = [True, True, True, True, True]
+    def __init__(self, curl_amounts: Optional[List[float]] = None):
+        """
+        Initialize finger state.
+
+        Args:
+            curl_amounts: List of 5 curl values (0.0-1.0), defaults to all at base position
+        """
+        if curl_amounts is None:
+            # Initialize to base position from config
+            from config import BASE_CURL_POSITION
+            self.curl_amounts = [BASE_CURL_POSITION[i] for i in range(5)]
+        else:
+            # Clamp to valid range
+            self.curl_amounts = [max(0.0, min(1.0, curl)) for curl in curl_amounts]
 
     def get_pulse(self, finger_index: int) -> int:
         """
-        Get PWM pulse value for a finger based on its state.
+        Get PWM pulse value for a finger based on its curl amount.
+
+        Uses linear interpolation: pulse = 150 + (curl * 450)
+        - 0% curl (0.0) = 150 pulse (fully open)
+        - 50% curl (0.5) = 375 pulse (neutral)
+        - 100% curl (1.0) = 600 pulse (fully closed)
 
         Args:
             finger_index: Finger index (0-4)
 
         Returns:
-            PWM pulse value (150=open, 600=closed)
+            PWM pulse value (150-600)
         """
         if finger_index < 0 or finger_index >= 5:
             logger.warning(f"Invalid finger index: {finger_index}")
             return FINGER_OPEN_PULSE[0]
 
-        is_open = self.fingers[finger_index]
-        return FINGER_OPEN_PULSE[finger_index] if is_open else FINGER_CLOSE_PULSE[finger_index]
+        curl = self.curl_amounts[finger_index]
+        # Linear interpolation: 150 + (curl_percentage * 450)
+        pulse = int(150 + curl * 450)
+
+        # Clamp to valid range
+        return max(150, min(600, pulse))
 
     def get_channel(self, finger_index: int) -> int:
         """
@@ -96,9 +117,9 @@ class FingerState:
         return (self.get_channel(finger_index), self.get_pulse(finger_index))
 
     def __str__(self) -> str:
-        """String representation showing finger states."""
-        states = ["OPEN" if f else "CLOSED" for f in self.fingers]
-        return f"FingerState({', '.join(f'{self.FINGER_NAMES[i]}:{states[i]}' for i in range(5))})"
+        """String representation showing finger curl percentages."""
+        curl_strs = [f"{self.curl_amounts[i]*100:.0f}%" for i in range(5)]
+        return f"FingerState({', '.join(f'{self.FINGER_NAMES[i]}:{curl_strs[i]}' for i in range(5))})"
 
     def __repr__(self) -> str:
         return self.__str__()
@@ -285,14 +306,14 @@ class HandClassifier:
 
     def classify_fingers(self, frame: np.ndarray) -> Tuple[FingerState, List[float]]:
         """
-        Classify individual finger states (open/closed) from the frame.
+        Classify individual finger curl amounts (0.0-1.0) from the frame.
 
         Args:
             frame: BGR image from OpenCV (numpy array)
 
         Returns:
             Tuple of (FingerState, confidences)
-            - FingerState: Binary state for each of 5 fingers
+            - FingerState: Continuous curl amount for each of 5 fingers (0.0-1.0)
             - confidences: List of 5 confidence values (0.0-1.0)
         """
         # Convert BGR to RGB for MediaPipe
@@ -303,14 +324,14 @@ class HandClassifier:
             results = self._hands.process(rgb_frame)
         except Exception as e:
             logger.warning(f"MediaPipe processing error: {e}")
-            # Return default state (all open) with zero confidence
+            # Return default state (base position) with zero confidence
             finger_state = FingerState()
             return finger_state, [0.0] * 5
 
         # Check if any hands detected
         if not results.multi_hand_landmarks:
             self._last_landmarks = None
-            # No hand detected - default to all open with zero confidence
+            # No hand detected - default to base position with zero confidence
             finger_state = FingerState()
             return finger_state, [0.0] * 5
 
@@ -323,19 +344,41 @@ class HandClassifier:
         if results.multi_handedness:
             handedness = results.multi_handedness[0].classification[0].label
 
-        # Analyze each finger individually
-        finger_curled, confidences = self._analyze_finger_states(hand_landmarks, handedness)
+        # Calculate continuous curl amounts for each finger
+        curl_amounts, confidences = self._calculate_finger_curls(hand_landmarks, handedness)
 
-        # Create FingerState (invert curled to get open state)
-        finger_state = FingerState()
-        finger_state.fingers = [not curled for curled in finger_curled]
+        # Create FingerState with continuous curl values
+        finger_state = FingerState(curl_amounts=curl_amounts)
 
         logger.debug(
-            f"Finger states: {finger_state}, "
+            f"Finger curls: {finger_state}, "
             f"Confidences: {[f'{c:.2f}' for c in confidences]}"
         )
 
         return finger_state, confidences
+
+    def _calculate_hand_size(self, landmarks) -> float:
+        """
+        Calculate hand size as the distance from wrist to middle finger MCP (knuckle).
+        This provides a scale-invariant normalization factor that accounts for camera
+        distance without being affected by finger curl state.
+
+        Args:
+            landmarks: MediaPipe hand landmarks
+
+        Returns:
+            Hand size (Euclidean distance from wrist to middle finger MCP)
+        """
+        wrist = landmarks.landmark[self.WRIST]
+        middle_mcp = landmarks.landmark[self.MIDDLE_MCP]
+
+        # Calculate Euclidean distance (using x, y, z coordinates)
+        dx = middle_mcp.x - wrist.x
+        dy = middle_mcp.y - wrist.y
+        dz = middle_mcp.z - wrist.z
+
+        hand_size = np.sqrt(dx*dx + dy*dy + dz*dz)
+        return hand_size
 
     def _analyze_finger_states(
         self,
@@ -395,6 +438,98 @@ class HandClassifier:
             confidences[finger_idx] = min(y_dist * 3.0, 1.0)  # Scale to 0-1
 
         return curled, confidences
+
+    def _calculate_finger_curls(
+        self,
+        landmarks,
+        handedness: str
+    ) -> Tuple[List[float], List[float]]:
+        """
+        Calculate continuous curl amount (0.0-1.0) for each finger with hand-size normalization.
+
+        Args:
+            landmarks: MediaPipe hand landmarks
+            handedness: "Left" or "Right"
+
+        Returns:
+            Tuple of (curl_amounts, confidence_list)
+            - curl_amounts: List of 5 floats (0.0=extended, 1.0=curled)
+            - confidence_list: List of 5 confidence values (0.0-1.0)
+        """
+        from config import FINGER_EXTENDED_RATIO, FINGER_CURLED_RATIO
+
+        curl_amounts = [0.0] * 5
+        confidences = [0.0] * 5
+
+        # Calculate hand size for normalization
+        hand_size = self._calculate_hand_size(landmarks)
+
+        if hand_size < 0.01:  # Avoid division by zero
+            logger.warning("Hand size too small, returning default curl values")
+            return curl_amounts, confidences
+
+        # Analyze Thumb (special case - uses X-axis distance)
+        thumb_tip = landmarks.landmark[self.THUMB_TIP]
+        thumb_mcp = landmarks.landmark[self.THUMB_MCP]
+
+        # Calculate 3D distance from tip to MCP
+        dx = thumb_tip.x - thumb_mcp.x
+        dy = thumb_tip.y - thumb_mcp.y
+        dz = thumb_tip.z - thumb_mcp.z
+        thumb_dist = np.sqrt(dx*dx + dy*dy + dz*dz)
+
+        # Normalize by hand size
+        thumb_ratio = thumb_dist / hand_size
+
+        # Map to curl percentage using calibrated extended/curled ratios
+        extended_ratio = FINGER_EXTENDED_RATIO[FingerState.THUMB]
+        curled_ratio = FINGER_CURLED_RATIO[FingerState.THUMB]
+
+        # Linear interpolation: curl = (extended - current) / (extended - curled)
+        # When current = extended → curl = 0.0
+        # When current = curled → curl = 1.0
+        if extended_ratio > curled_ratio:
+            curl = (extended_ratio - thumb_ratio) / (extended_ratio - curled_ratio)
+        else:
+            curl = 0.5  # Fallback
+
+        curl_amounts[FingerState.THUMB] = max(0.0, min(1.0, curl))
+        confidences[FingerState.THUMB] = min(thumb_dist * 5.0, 1.0)
+
+        # Analyze other fingers (Index, Middle, Ring, Pinky)
+        finger_landmarks_map = [
+            (self.INDEX_TIP, self.INDEX_MCP, FingerState.INDEX),
+            (self.MIDDLE_TIP, self.MIDDLE_MCP, FingerState.MIDDLE),
+            (self.RING_TIP, self.RING_MCP, FingerState.RING),
+            (self.PINKY_TIP, self.PINKY_MCP, FingerState.PINKY)
+        ]
+
+        for tip_idx, mcp_idx, finger_idx in finger_landmarks_map:
+            tip = landmarks.landmark[tip_idx]
+            mcp = landmarks.landmark[mcp_idx]
+
+            # Calculate 3D distance from tip to MCP
+            dx = tip.x - mcp.x
+            dy = tip.y - mcp.y
+            dz = tip.z - mcp.z
+            finger_dist = np.sqrt(dx*dx + dy*dy + dz*dz)
+
+            # Normalize by hand size
+            finger_ratio = finger_dist / hand_size
+
+            # Map to curl percentage
+            extended_ratio = FINGER_EXTENDED_RATIO[finger_idx]
+            curled_ratio = FINGER_CURLED_RATIO[finger_idx]
+
+            if extended_ratio > curled_ratio:
+                curl = (extended_ratio - finger_ratio) / (extended_ratio - curled_ratio)
+            else:
+                curl = 0.5  # Fallback
+
+            curl_amounts[finger_idx] = max(0.0, min(1.0, curl))
+            confidences[finger_idx] = min(finger_dist * 3.0, 1.0)
+
+        return curl_amounts, confidences
 
     def draw_landmarks(
         self,

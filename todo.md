@@ -4,6 +4,7 @@ limit servo movement ? or track servo movement to get a min/max
 
 remake hand_classifier.py to return distance based on fingertip <-> MCP joint and then rotate servos based on that
 - nonlinear? idk like depends on how your fingers bend
+- ^^ save this for a later implementation
 
 define base position for servos -> reset to base position every time it starts
 

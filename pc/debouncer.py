@@ -11,7 +11,8 @@ from config import (
     DEBOUNCE_FRAMES,
     HYSTERESIS_THRESHOLD,
     NO_HAND_TIMEOUT_FRAMES,
-    FINGER_DEBOUNCE_FRAMES
+    FINGER_DEBOUNCE_FRAMES,
+    CURL_CHANGE_THRESHOLD
 )
 
 logger = logging.getLogger(__name__)
@@ -168,82 +169,74 @@ class GestureDebouncer:
 
 class PerFingerDebouncer:
     """
-    Debounces individual finger states to prevent servo chatter.
+    Debounces individual finger curl values to prevent servo chatter.
 
-    Each finger is tracked independently with its own debounce counter,
-    allowing some fingers to change state while others remain stable.
+    Uses threshold-based detection: only triggers commands when curl amount
+    changes by more than the configured threshold (e.g., 5%).
+    Each finger is tracked independently.
     """
 
-    def __init__(self, debounce_frames: int = FINGER_DEBOUNCE_FRAMES):
+    def __init__(self, change_threshold: float = CURL_CHANGE_THRESHOLD):
         """
         Initialize the per-finger debouncer.
 
         Args:
-            debounce_frames: Frames required to confirm finger state change
+            change_threshold: Minimum curl change (0.0-1.0) to trigger update (default 0.05 = 5%)
         """
-        self._debounce_frames = debounce_frames
+        from config import BASE_CURL_POSITION
+
+        self._change_threshold = change_threshold
 
         # Per-finger state tracking (5 fingers)
-        self._stable_state = [True] * 5  # All fingers start open
-        self._pending_state = [None] * 5
-        self._pending_count = [0] * 5
+        # Initialize to base position from config
+        self._stable_curl = [BASE_CURL_POSITION[i] for i in range(5)]
         self._state_changed = [False] * 5
 
-        logger.info(f"PerFingerDebouncer initialized: debounce={debounce_frames} frames")
+        logger.info(f"PerFingerDebouncer initialized: threshold={change_threshold*100:.0f}% curl change")
 
-    def update(self, raw_finger_states: list) -> list:
+    def update(self, raw_curl_amounts: list) -> list:
         """
-        Update debouncer with raw finger states from classifier.
+        Update debouncer with raw finger curl amounts from classifier.
+
+        Uses threshold-based detection: only updates stable value when the
+        curl amount changes by more than the configured threshold.
 
         Args:
-            raw_finger_states: List of 5 bools (True=open, False=closed)
+            raw_curl_amounts: List of 5 floats (0.0-1.0, where 0.0=extended, 1.0=curled)
 
         Returns:
-            List of 5 stable (debounced) finger states
+            List of 5 stable (debounced) curl amounts
         """
-        if len(raw_finger_states) != 5:
-            logger.warning(f"Invalid finger states length: {len(raw_finger_states)}, expected 5")
-            return self._stable_state
+        if len(raw_curl_amounts) != 5:
+            logger.warning(f"Invalid curl amounts length: {len(raw_curl_amounts)}, expected 5")
+            return self._stable_curl
 
         # Process each finger independently
         for i in range(5):
             self._state_changed[i] = False
-            raw = raw_finger_states[i]
+            raw_curl = raw_curl_amounts[i]
 
-            # Already stable - reset pending
-            if raw == self._stable_state[i]:
-                self._pending_state[i] = None
-                self._pending_count[i] = 0
-                continue
+            # Clamp to valid range
+            raw_curl = max(0.0, min(1.0, raw_curl))
 
-            # Same pending state - increment counter
-            if raw == self._pending_state[i]:
-                self._pending_count[i] += 1
+            # Calculate change from stable value
+            curl_delta = abs(raw_curl - self._stable_curl[i])
 
-                logger.debug(
-                    f"Finger {i} pending: {self._pending_count[i]}/{self._debounce_frames}"
+            # Check if change exceeds threshold
+            if curl_delta > self._change_threshold:
+                # Significant change detected - update stable value
+                old_curl = self._stable_curl[i]
+                self._stable_curl[i] = raw_curl
+                self._state_changed[i] = True
+
+                finger_names = ["Thumb", "Index", "Middle", "Ring", "Pinky"]
+                logger.info(
+                    f"Finger {i} ({finger_names[i]}) curl change: "
+                    f"{old_curl*100:.0f}% -> {raw_curl*100:.0f}% "
+                    f"(Δ={curl_delta*100:.0f}%)"
                 )
 
-                # Reached threshold - transition to new stable state
-                if self._pending_count[i] >= self._debounce_frames:
-                    old_state = "OPEN" if self._stable_state[i] else "CLOSED"
-                    new_state = "OPEN" if raw else "CLOSED"
-
-                    self._stable_state[i] = raw
-                    self._state_changed[i] = True
-                    self._pending_state[i] = None
-                    self._pending_count[i] = 0
-
-                    finger_names = ["Thumb", "Index", "Middle", "Ring", "Pinky"]
-                    logger.info(
-                        f"Finger {i} ({finger_names[i]}) state change: {old_state} -> {new_state}"
-                    )
-            else:
-                # New pending state - start counter
-                self._pending_state[i] = raw
-                self._pending_count[i] = 1
-
-        return self._stable_state
+        return self._stable_curl
 
     def get_changed_fingers(self) -> list:
         """
@@ -255,17 +248,17 @@ class PerFingerDebouncer:
         return [i for i in range(5) if self._state_changed[i]]
 
     @property
-    def stable_states(self) -> list:
-        """Get current stable states without updating."""
-        return self._stable_state
+    def stable_curls(self) -> list:
+        """Get current stable curl amounts without updating."""
+        return self._stable_curl
 
     def reset(self) -> None:
-        """Reset debouncer to initial state (all fingers open)."""
-        self._stable_state = [True] * 5
-        self._pending_state = [None] * 5
-        self._pending_count = [0] * 5
+        """Reset debouncer to base position."""
+        from config import BASE_CURL_POSITION
+
+        self._stable_curl = [BASE_CURL_POSITION[i] for i in range(5)]
         self._state_changed = [False] * 5
-        logger.info("PerFingerDebouncer reset")
+        logger.info("PerFingerDebouncer reset to base position")
 
 
 if __name__ == "__main__":

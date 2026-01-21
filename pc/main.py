@@ -169,8 +169,8 @@ def draw_overlay(
 
 def draw_finger_overlay(
     frame,
-    raw_states: list,
-    stable_states: list,
+    raw_curls: list,
+    stable_curls: list,
     confidences: list,
     fps: float,
     serial_connected: bool
@@ -180,8 +180,8 @@ def draw_finger_overlay(
 
     Args:
         frame: Video frame to draw on
-        raw_states: List of 5 raw finger states (True=open, False=closed)
-        stable_states: List of 5 stable finger states (True=open, False=closed)
+        raw_curls: List of 5 raw finger curl amounts (0.0-1.0)
+        stable_curls: List of 5 stable finger curl amounts (0.0-1.0)
         confidences: List of 5 confidence values (0.0-1.0)
         fps: Current frames per second
         serial_connected: Whether serial is connected
@@ -189,17 +189,31 @@ def draw_finger_overlay(
     height, width = frame.shape[:2]
     finger_names = ["Thumb", "Index", "Middle", "Ring", "Pinky"]
 
-    # Colors: Green for open, Red for closed
-    open_color = (0, 255, 0)
-    closed_color = (0, 0, 255)
+    def get_gradient_color(curl: float) -> tuple:
+        """
+        Get gradient color based on curl percentage.
+        0% (extended) = Green
+        50% (neutral) = Yellow
+        100% (curled) = Red
+        """
+        if curl <= 0.5:
+            # Green to Yellow: interpolate from (0, 255, 0) to (0, 255, 255)
+            ratio = curl * 2  # 0.0-0.5 → 0.0-1.0
+            b = int(255 * ratio)
+            return (0, 255, b)
+        else:
+            # Yellow to Red: interpolate from (0, 255, 255) to (0, 0, 255)
+            ratio = (curl - 0.5) * 2  # 0.5-1.0 → 0.0-1.0
+            g = int(255 * (1 - ratio))
+            return (0, g, 255)
 
     # Draw finger status grid (left side)
     y_offset = 30
-    line_height = 25
+    line_height = 30
 
     for i in range(5):
-        raw_color = open_color if raw_states[i] else closed_color
-        stable_color = open_color if stable_states[i] else closed_color
+        raw_color = get_gradient_color(raw_curls[i])
+        stable_color = get_gradient_color(stable_curls[i])
 
         # Finger name
         cv2.putText(
@@ -212,16 +226,40 @@ def draw_finger_overlay(
             1
         )
 
-        # Raw state indicator (small circle)
+        # Raw curl indicator (small circle)
         cv2.circle(frame, (100, y_offset - 5), 5, raw_color, -1)
 
-        # Stable state indicator (larger circle)
+        # Stable curl indicator (larger circle)
         cv2.circle(frame, (120, y_offset - 5), 7, stable_color, -1)
 
-        # Confidence bar
-        bar_x = 140
-        bar_width = 80
-        bar_height = 10
+        # Curl percentage text
+        curl_pct_text = f"{stable_curls[i]*100:.0f}%"
+        cv2.putText(
+            frame,
+            curl_pct_text,
+            (140, y_offset),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            stable_color,
+            1
+        )
+
+        # Pulse value text
+        pulse = int(150 + stable_curls[i] * 450)
+        pulse_text = f"→ {pulse}"
+        cv2.putText(
+            frame,
+            pulse_text,
+            (190, y_offset),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.4,
+            (200, 200, 200),
+            1
+        )
+
+        # Confidence bar (small)
+        bar_x = 250
+        bar_width = 50
         fill = int(bar_width * confidences[i])
 
         cv2.rectangle(
@@ -235,19 +273,8 @@ def draw_finger_overlay(
             frame,
             (bar_x, y_offset - 10),
             (bar_x + fill, y_offset),
-            raw_color,
+            stable_color,
             -1
-        )
-
-        # Confidence percentage
-        cv2.putText(
-            frame,
-            f"{confidences[i]:.0%}",
-            (bar_x + bar_width + 5, y_offset - 2),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.4,
-            (255, 255, 255),
-            1
         )
 
         y_offset += line_height
@@ -429,22 +456,24 @@ def run_finger_control_loop(
         finger_state, confidences = classifier.classify_fingers(frame)
 
         # Debounce per finger
-        stable_states = debouncer.update(finger_state.fingers)
+        stable_curls = debouncer.update(finger_state.curl_amounts)
         changed_fingers = debouncer.get_changed_fingers()
 
         # Send commands only for changed fingers
         if changed_fingers and use_serial:
-            # Update FingerState with stable states
-            finger_state.fingers = stable_states
+            # Create FingerState with stable curl amounts for sending
+            from hand_classifier import FingerState
+            stable_finger_state = FingerState(curl_amounts=stable_curls)
 
             # Send only changed fingers
-            sent = serial.send_finger_state(finger_state, changed_fingers)
+            sent = serial.send_finger_state(stable_finger_state, changed_fingers)
 
             if sent > 0:
                 finger_names = ["Thumb", "Index", "Middle", "Ring", "Pinky"]
                 changed_names = [finger_names[i] for i in changed_fingers]
-                states = ["OPEN" if stable_states[i] else "CLOSED" for i in changed_fingers]
-                logger.info(f"Sent {sent} commands: {', '.join(f'{name}={state}' for name, state in zip(changed_names, states))}")
+                curls = [f"{stable_curls[i]*100:.0f}%" for i in changed_fingers]
+                pulses = [int(150 + stable_curls[i] * 450) for i in changed_fingers]
+                logger.info(f"Sent {sent} commands: {', '.join(f'{name}={curl} ({pulse})' for name, curl, pulse in zip(changed_names, curls, pulses))}")
 
         # Display
         if show_display:
@@ -457,9 +486,9 @@ def run_finger_control_loop(
             # Draw per-finger overlay
             draw_finger_overlay(
                 frame,
-                finger_state.fingers,  # Raw states
-                stable_states,         # Stable states
-                confidences,           # Confidences
+                finger_state.curl_amounts,  # Raw curl amounts
+                stable_curls,               # Stable curl amounts
+                confidences,                # Confidences
                 fps,
                 serial.is_connected if use_serial else False
             )
