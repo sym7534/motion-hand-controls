@@ -1,8 +1,3 @@
-# motion-hand-controls
-
-
-TODO:
-
 make closed % be a relative distance, not absolute distance - accounts for distance to camera
 
 limit servo movement ? or track servo movement to get a min/max
