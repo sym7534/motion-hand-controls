@@ -187,3 +187,5 @@ calibration_*.txt
 
 # Claude Code cache/temp files
 .claude/
+CLAUDE.md
+commentstyle.md

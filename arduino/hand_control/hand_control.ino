@@ -6,7 +6,7 @@
  * Hardware:
  *   - Arduino Nano
  *   - PCA9685 PWM driver (I2C: SDA=A4, SCL=A5, Address=0x40)
- *   - 5x MG90S servos on channels 0, 4, 5, 6, 7
+ *   - 5x MG90S servos on channels 4, 5, 6, 7, 8
  *   - External 5V power supply for servos
  *
  * Commands:
@@ -35,7 +35,7 @@
 #define SERVO_CENTER ((SERVOMIN + SERVOMAX) / 2)
 
 // Finger Channel Mapping
-const uint8_t FINGER_CHANNELS[] = {0, 4, 5, 6, 7};
+const uint8_t FINGER_CHANNELS[] = {8, 7, 6, 5, 4};  // Thumb, Index, Middle, Ring, Pinky
 const uint8_t NUM_FINGERS = 5;
 
 // Finger names for debugging
@@ -219,18 +219,19 @@ void parseSetCommand(char* args) {
     int channel, pulse;
 
     if (sscanf(args, "%d %d", &channel, &pulse) == 2) {
-        // Validate channel
-        int fingerIndex = getFingerIndex(channel);
-
-        if (fingerIndex >= 0) {
+        // Accept any channel 0-15 for direct PCA9685 testing
+        if (channel >= 0 && channel <= 15) {
             // Clamp pulse to safe range
             pulse = constrain(pulse, SERVOMIN, SERVOMAX);
 
-            // Set target (smooth) or apply directly
-            targetPulse[fingerIndex] = pulse;
-            if (!SMOOTH_ENABLED) {
+            // Apply PWM directly (bypass smoothing for test)
+            pwm.setPWM(channel, 0, pulse);
+
+            // Also update finger tracking if it's a known channel
+            int fingerIndex = getFingerIndex(channel);
+            if (fingerIndex >= 0) {
                 currentPulse[fingerIndex] = pulse;
-                pwm.setPWM(channel, 0, pulse);
+                targetPulse[fingerIndex] = pulse;
             }
 
             Serial.print("ACK:SET ");
