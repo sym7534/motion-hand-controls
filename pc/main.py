@@ -1,7 +1,5 @@
-"""
-Main application for hand gesture control system.
-Orchestrates camera capture, gesture classification, debouncing, and serial communication.
-"""
+# main app for hand gesture control
+# camera capture, gesture classification, debouncing, serial comms
 
 import argparse
 import logging
@@ -25,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 def setup_logging(debug: bool = False) -> None:
-    """Configure logging format and level."""
+    # configure logging format + level
     level = logging.DEBUG if debug else logging.INFO
     logging.basicConfig(
         level=level,
@@ -35,7 +33,7 @@ def setup_logging(debug: bool = False) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    """Parse command-line arguments."""
+    # parse cli args
     parser = argparse.ArgumentParser(
         description='Hand Gesture Control System'
     )
@@ -76,17 +74,17 @@ def draw_overlay(
     fps: float,
     serial_connected: bool
 ) -> None:
-    """Draw status overlay on frame."""
+    # draw status overlay on frame
     height, width = frame.shape[:2]
 
-    # Colors
+    # colors
     colors = {
         GestureState.NO_HAND: (128, 128, 128),
         GestureState.OPEN: (0, 255, 0),
         GestureState.CLOSE: (0, 0, 255),
     }
 
-    # Raw state (top-left)
+    # raw state (top-left)
     cv2.putText(
         frame,
         f"Raw: {raw_state.name}",
@@ -97,7 +95,7 @@ def draw_overlay(
         OVERLAY_THICKNESS
     )
 
-    # Stable state (top-left, below raw)
+    # stable state (below raw)
     cv2.putText(
         frame,
         f"Stable: {stable_state.name}",
@@ -108,7 +106,7 @@ def draw_overlay(
         OVERLAY_THICKNESS
     )
 
-    # Confidence bar (top-left, below stable)
+    # confidence bar
     bar_x = 10
     bar_y = 80
     bar_width = 200
@@ -129,7 +127,7 @@ def draw_overlay(
         1
     )
 
-    # FPS (top-right)
+    # fps (top-right)
     fps_text = f"FPS: {fps:.1f}"
     text_size = cv2.getTextSize(fps_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0]
     cv2.putText(
@@ -142,7 +140,7 @@ def draw_overlay(
         1
     )
 
-    # Serial status (top-right, below FPS)
+    # serial status
     serial_text = "Serial: OK" if serial_connected else "Serial: OFF"
     serial_color = (0, 255, 0) if serial_connected else (0, 0, 255)
     cv2.putText(
@@ -155,7 +153,7 @@ def draw_overlay(
         1
     )
 
-    # Instructions (bottom)
+    # instructions
     cv2.putText(
         frame,
         "Press 'q' to quit | 'r' to reset",
@@ -175,39 +173,24 @@ def draw_finger_overlay(
     fps: float,
     serial_connected: bool
 ) -> None:
-    """
-    Draw per-finger status overlay on frame.
-
-    Args:
-        frame: Video frame to draw on
-        raw_curls: List of 5 raw finger curl amounts (0.0-1.0)
-        stable_curls: List of 5 stable finger curl amounts (0.0-1.0)
-        confidences: List of 5 confidence values (0.0-1.0)
-        fps: Current frames per second
-        serial_connected: Whether serial is connected
-    """
+    # draw per-finger status overlay on frame
     height, width = frame.shape[:2]
     finger_names = ["Thumb", "Index", "Middle", "Ring", "Pinky"]
 
     def get_gradient_color(curl: float) -> tuple:
-        """
-        Get gradient color based on curl percentage.
-        0% (extended) = Green
-        50% (neutral) = Yellow
-        100% (curled) = Red
-        """
+        # gradient color based on curl: 0%=green, 50%=yellow, 100%=red
         if curl <= 0.5:
-            # Green to Yellow: interpolate from (0, 255, 0) to (0, 255, 255)
+            # green to yellow
             ratio = curl * 2  # 0.0-0.5 → 0.0-1.0
             b = int(255 * ratio)
             return (0, 255, b)
         else:
-            # Yellow to Red: interpolate from (0, 255, 255) to (0, 0, 255)
+            # yellow to red
             ratio = (curl - 0.5) * 2  # 0.5-1.0 → 0.0-1.0
             g = int(255 * (1 - ratio))
             return (0, g, 255)
 
-    # Draw finger status grid (left side)
+    # finger status grid
     y_offset = 30
     line_height = 30
 
@@ -215,7 +198,7 @@ def draw_finger_overlay(
         raw_color = get_gradient_color(raw_curls[i])
         stable_color = get_gradient_color(stable_curls[i])
 
-        # Finger name
+        # finger name
         cv2.putText(
             frame,
             f"{finger_names[i]}:",
@@ -226,13 +209,13 @@ def draw_finger_overlay(
             1
         )
 
-        # Raw curl indicator (small circle)
+        # raw curl indicator
         cv2.circle(frame, (100, y_offset - 5), 5, raw_color, -1)
 
-        # Stable curl indicator (larger circle)
+        # stable curl indicator
         cv2.circle(frame, (120, y_offset - 5), 7, stable_color, -1)
 
-        # Curl percentage text
+        # curl percentage
         curl_pct_text = f"{stable_curls[i]*100:.0f}%"
         cv2.putText(
             frame,
@@ -244,7 +227,7 @@ def draw_finger_overlay(
             1
         )
 
-        # Pulse value text
+        # pulse value
         pulse = int(150 + stable_curls[i] * 450)
         pulse_text = f"→ {pulse}"
         cv2.putText(
@@ -257,7 +240,7 @@ def draw_finger_overlay(
             1
         )
 
-        # Confidence bar (small)
+        # confidence bar
         bar_x = 250
         bar_width = 50
         fill = int(bar_width * confidences[i])
@@ -279,7 +262,7 @@ def draw_finger_overlay(
 
         y_offset += line_height
 
-    # Legend (below finger status)
+    # legend
     legend_y = y_offset + 10
     cv2.putText(frame, "Legend:", (10, legend_y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
     cv2.circle(frame, (70, legend_y - 5), 5, (255, 255, 255), 1)
@@ -287,7 +270,7 @@ def draw_finger_overlay(
     cv2.circle(frame, (120, legend_y - 5), 7, (255, 255, 255), 1)
     cv2.putText(frame, "Stable", (132, legend_y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
 
-    # FPS (top-right)
+    # fps
     fps_text = f"FPS: {fps:.1f}"
     text_size = cv2.getTextSize(fps_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0]
     cv2.putText(
@@ -300,7 +283,7 @@ def draw_finger_overlay(
         1
     )
 
-    # Serial status (top-right, below FPS)
+    # serial status
     serial_text = "Serial: OK" if serial_connected else "Serial: OFF"
     serial_color = (0, 255, 0) if serial_connected else (0, 0, 255)
     cv2.putText(
@@ -313,7 +296,7 @@ def draw_finger_overlay(
         1
     )
 
-    # Instructions (bottom)
+    # instructions
     cv2.putText(
         frame,
         "Press 'q' to quit | 'r' to reset",
@@ -333,17 +316,7 @@ def run_capture_loop(
     show_display: bool = True,
     use_serial: bool = True
 ) -> None:
-    """
-    Main processing loop.
-
-    Args:
-        camera: Camera instance
-        classifier: HandClassifier instance
-        debouncer: GestureDebouncer instance
-        serial: SerialLink instance
-        show_display: Whether to show video display
-        use_serial: Whether to send serial commands
-    """
+    # main processing loop
     last_sent_state: GestureState = None
     frame_count = 0
     fps_start_time = time.time()
@@ -352,13 +325,13 @@ def run_capture_loop(
     logger.info("Starting capture loop (press 'q' to quit)")
 
     while True:
-        # Capture frame
+        # capture frame
         success, frame = camera.read()
         if not success:
             logger.warning("Frame capture failed")
             continue
 
-        # Calculate FPS
+        # calculate fps
         frame_count += 1
         elapsed = time.time() - fps_start_time
         if elapsed >= 1.0:
@@ -366,13 +339,13 @@ def run_capture_loop(
             frame_count = 0
             fps_start_time = time.time()
 
-        # Classify gesture
+        # classify gesture
         raw_state, confidence = classifier.classify(frame)
 
-        # Debounce
+        # debounce
         stable_state = debouncer.update(raw_state, confidence)
 
-        # Send command on state change
+        # send command on state change
         if debouncer.state_changed and stable_state != last_sent_state:
             if stable_state != GestureState.NO_HAND and use_serial:
                 if serial.send_gesture(stable_state):
@@ -381,12 +354,12 @@ def run_capture_loop(
                     logger.warning(f"Failed to send: {stable_state.name}")
             last_sent_state = stable_state
 
-        # Display
+        # display
         if show_display:
-            # Draw hand landmarks
+            # draw hand landmarks
             frame = classifier.draw_landmarks(frame, raw_state, confidence)
 
-            # Draw overlay
+            # draw overlay
             draw_overlay(
                 frame,
                 raw_state,
@@ -398,7 +371,7 @@ def run_capture_loop(
 
             cv2.imshow(DISPLAY_WINDOW_NAME, frame)
 
-            # Handle keyboard input
+            # handle keyboard input
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
                 logger.info("Quit requested")
@@ -420,17 +393,7 @@ def run_finger_control_loop(
     show_display: bool = True,
     use_serial: bool = True
 ) -> None:
-    """
-    Main processing loop for individual finger control.
-
-    Args:
-        camera: Camera instance
-        classifier: HandClassifier instance
-        debouncer: PerFingerDebouncer instance
-        serial: SerialLink instance
-        show_display: Whether to show video display
-        use_serial: Whether to send serial commands
-    """
+    # main processing loop for individual finger control
     frame_count = 0
     fps_start_time = time.time()
     fps = 0.0
@@ -438,13 +401,13 @@ def run_finger_control_loop(
     logger.info("Starting finger control loop (press 'q' to quit)")
 
     while True:
-        # Capture frame
+        # capture frame
         success, frame = camera.read()
         if not success:
             logger.warning("Frame capture failed")
             continue
 
-        # Calculate FPS
+        # calculate fps
         frame_count += 1
         elapsed = time.time() - fps_start_time
         if elapsed >= 1.0:
@@ -452,20 +415,20 @@ def run_finger_control_loop(
             frame_count = 0
             fps_start_time = time.time()
 
-        # Classify individual fingers
+        # classify individual fingers
         finger_state, confidences = classifier.classify_fingers(frame)
 
-        # Debounce per finger
+        # debounce per finger
         stable_curls = debouncer.update(finger_state.curl_amounts)
         changed_fingers = debouncer.get_changed_fingers()
 
-        # Send commands only for changed fingers
+        # send commands for changed fingers
         if changed_fingers and use_serial:
-            # Create FingerState with stable curl amounts for sending
+            # create FingerState with stable curls
             from hand_classifier import FingerState
             stable_finger_state = FingerState(curl_amounts=stable_curls)
 
-            # Send only changed fingers
+            # send only changed fingers
             sent = serial.send_finger_state(stable_finger_state, changed_fingers)
 
             if sent > 0:
@@ -475,27 +438,39 @@ def run_finger_control_loop(
                 pulses = [int(150 + stable_curls[i] * 450) for i in changed_fingers]
                 logger.info(f"Sent {sent} commands: {', '.join(f'{name}={curl} ({pulse})' for name, curl, pulse in zip(changed_names, curls, pulses))}")
 
-        # Display
+        # display
         if show_display:
-            # Draw hand landmarks first (if available)
+            # draw hand landmarks (if available)
             if classifier._last_landmarks is not None:
-                # Create a dummy state for drawing landmarks
+                # dummy state for drawing
                 dummy_state = GestureState.OPEN
                 frame = classifier.draw_landmarks(frame, dummy_state, max(confidences) if confidences else 0.0)
 
-            # Draw per-finger overlay
+                # draw wrist-to-pinky-knuckle distance
+                h, w = frame.shape[:2]
+                wrist = classifier._last_landmarks.landmark[HandClassifier.WRIST]
+                pinky_mcp = classifier._last_landmarks.landmark[HandClassifier.PINKY_MCP]
+                wx, wy = int(wrist.x * w), int(wrist.y * h)
+                px, py = int(pinky_mcp.x * w), int(pinky_mcp.y * h)
+                dist = ((px - wx) ** 2 + (py - wy) ** 2) ** 0.5
+                cv2.line(frame, (wx, wy), (px, py), (255, 255, 0), 2)
+                mx, my = (wx + px) // 2, (wy + py) // 2
+                cv2.putText(frame, f"{dist:.0f} px", (mx + 5, my - 5),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1, cv2.LINE_AA)
+
+            # draw per-finger overlay
             draw_finger_overlay(
                 frame,
-                finger_state.curl_amounts,  # Raw curl amounts
-                stable_curls,               # Stable curl amounts
-                confidences,                # Confidences
+                finger_state.curl_amounts,  # raw curls
+                stable_curls,               # stable curls
+                confidences,                # confidences
                 fps,
                 serial.is_connected if use_serial else False
             )
 
             cv2.imshow(DISPLAY_WINDOW_NAME, frame)
 
-            # Handle keyboard input
+            # handle keyboard input
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
                 logger.info("Quit requested")
@@ -509,16 +484,11 @@ def run_finger_control_loop(
 
 
 def main() -> int:
-    """
-    Main application entry point.
-
-    Returns:
-        Exit code (0=success, 1=camera error, 2=serial error)
-    """
+    # main entry point - returns 0=success, 1=camera error, 2=serial error
     args = parse_args()
     setup_logging(args.debug)
 
-    # List ports mode
+    # list ports mode
     if args.list_ports:
         print("Available serial ports:")
         for port, desc in SerialLink.list_available_ports():
@@ -527,21 +497,21 @@ def main() -> int:
 
     logger.info("Hand Gesture Control System starting...")
 
-    # Initialize components
+    # init components
     camera = Camera()
     classifier = HandClassifier()
-    debouncer = PerFingerDebouncer()  # Use per-finger debouncer for individual finger control
+    debouncer = PerFingerDebouncer()  # per-finger debouncer for individual finger control
     serial = SerialLink(port=args.port)
 
     try:
-        # Start camera
+        # start camera
         try:
             camera.start()
         except CameraError as e:
             logger.error(f"Camera error: {e}")
             return 1
 
-        # Connect serial (optional)
+        # connect serial (optional)
         use_serial = not args.no_serial
         if use_serial:
             if serial.connect():
@@ -550,7 +520,7 @@ def main() -> int:
                 logger.warning("Serial connection failed - continuing without serial")
                 use_serial = False
 
-        # Run main loop with individual finger control
+        # run main loop
         run_finger_control_loop(
             camera=camera,
             classifier=classifier,
@@ -572,7 +542,7 @@ def main() -> int:
         return 1
 
     finally:
-        # Cleanup
+        # cleanup
         classifier.close()
         camera.stop()
         serial.disconnect()

@@ -28,7 +28,7 @@ NO_HAND_TIMEOUT_FRAMES = 30      # Frames without hand before failsafe (OPEN)
 # =============================================================================
 # SERIAL SETTINGS
 # =============================================================================
-SERIAL_PORT = "COM6"             # Serial port (Windows: COM3, Linux: /dev/ttyUSB0)
+SERIAL_PORT = "COM5"             # Serial port (Windows: COM3, Linux: /dev/ttyUSB0)
 BAUD_RATE = 115200               # Must match Arduino sketch
 SERIAL_TIMEOUT = 1.0             # Read timeout in seconds
 
@@ -84,11 +84,11 @@ FINGER_CLOSE_PULSE = {
 # Hardware channel mapping for PCA9685 servo driver
 # Maps finger index to hardware channel
 FINGER_CHANNELS = {
-    0: 0,    # Thumb  -> Channel 0
-    1: 4,    # Index  -> Channel 4
-    2: 5,    # Middle -> Channel 5
-    3: 6,    # Ring   -> Channel 6
-    4: 7     # Pinky  -> Channel 7
+    0: 8,    # Thumb   -> Channel 8
+    1: 7,    # Index   -> Channel 7
+    2: 6,    # Middle  -> Channel 6
+    3: 5,    # Ring    -> Channel 5
+    4: 4     # Pinky   -> Channel 4
 }
 
 # Command transmission settings
